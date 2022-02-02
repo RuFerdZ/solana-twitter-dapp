@@ -1,17 +1,51 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::system_program;
 
 declare_id!("AdGdR4tVHcxa36vEvPGh9QHsAMLAD8861puJzr6mntJj");
 
 #[program]
 pub mod solana_twitter {
     use super::*;
-    pub fn initialize(ctx: Context<Initialize>) -> ProgramResult {
+    // functions are snake_cased
+    pub fn send_tweet(ctx: Context<SendTweet>, topic: String, content: String) -> ProgramResult {
+        // taken from SendTweet Context
+        let tweet: &mut Account<Tweet> = &mut ctx.accounts.tweet;
+        let author: &Signer = &ctx.accounts.author;
+        let clock: Clock = Clock::get().unwrap();
+
+        //TODO: we cannot use 'my_string.len()' because it returns the number of bytes in the string
+        // this will throw and exception:kinda thing and stop the program
+        // No matter how many instructions and nested instructions exists inside a transaction, it will always be atomic — i.e. it's all or nothing.
+        if topic.chars().count() > 50 {
+            // Return a error...
+            return Err(ErrorCode::TopicTooLong.into())
+        }
+
+        if content.chars().count() > 280 {
+            // Return a error...
+            return Err(ErrorCode::ContentTooLong.into())
+        }
+
+        tweet.author = *author.key;                //Let's start with the author's public key. We can access it via author.key but this contains a reference to the public key so we need to dereference it using *
+        tweet.timestamp = clock.unix_timestamp;
+        tweet.topic = topic;
+        tweet.content = content;
+
         Ok(())
     }
 }
 
+// #[derive(Accounts)]
+// pub struct Initialize {}
 #[derive(Accounts)]
-pub struct Initialize {}
+pub struct SendTweet<'info> {
+    #[account(init, payer = author, space = Tweet :: LEN)]
+    pub tweet : Account<'info, Tweet>,   // this specifies it is an account/program of type Tweet
+    #[account(mut)]  // mute account
+    pub author : Signer<'info>,  // // the signer is the account that is signing the transaction and somewhat similar to AccountInfo
+    #[account(address = system_program::ID)]   // to validate the system program id matches solana system program id
+    pub system_program: AccountInfo<'info>,  // AccountInfo represent account info of a program
+}
 
 // 1. Define the structure of the Tweet account.
 #[account]
@@ -62,4 +96,13 @@ impl Tweet {
         + TIMESTAMP_LENGTH // Timestamp.
         + STRING_LENGTH_PREFIX + MAX_TOPIC_LENGTH // Topic.
         + STRING_LENGTH_PREFIX + MAX_CONTENT_LENGTH; // Content.
+}
+
+#[error]
+pub enum ErrorCode {   // our custom error messages
+    #[msg("The provided topic should be 50 characters long maximum.")]
+    TopicTooLong,
+
+    #[msg("The provided content should be 280 characters long maximum.")]
+    ContentTooLong,
 }
