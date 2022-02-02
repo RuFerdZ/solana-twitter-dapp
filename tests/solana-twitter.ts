@@ -1,6 +1,8 @@
 import * as anchor from '@project-serum/anchor';
 import { Program } from '@project-serum/anchor';
 import { SolanaTwitter } from '../target/types/solana_twitter';
+import * as assert from "assert";
+import {it} from "mocha";
 
 describe('solana-twitter', () => {
 
@@ -9,9 +11,136 @@ describe('solana-twitter', () => {
 
   const program = anchor.workspace.SolanaTwitter as Program<SolanaTwitter>;
 
-  it('Is initialized!', async () => {
-    // Add your test here.
-    const tx = await program.rpc.initialize({});
-    console.log("Your transaction signature", tx);
+  // it('Is initialized!', async () => {
+  //   // Add your test here.
+  //   const tx = await program.rpc.initialize({});
+  //   console.log("Your transaction signature", tx);
+  // });
+
+  it('can send a new tweet', async () => {
+    const tweet = anchor.web3.Keypair.generate();
+    await program.rpc.sendTweet('veganism', 'Hummus, am I right?', {
+      accounts: {
+        // Accounts here
+        tweet: tweet.publicKey,
+        author: program.provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,  // implementation snake case => camel case in request
+      },
+      signers: [
+          // key-pairs of signers
+          tweet,
+      ]
+    })
+    // Fetch the account details of the created tweet.
+    const tweetAccount = await program.account.tweet.fetch(tweet.publicKey);
+
+    // console.log(tweetAccount);
+    // {
+    //   author: PublicKey {
+    //   _bn: <BN: 6ce51f1e486f70204cbb8719e1a2211e9d9541d760eeaf77fdfa8a20f022b411>
+    // },
+    //   timestamp: <BN: 61da87fe>,
+    //     topic: 'veganism',
+    //     content: 'Hummus, am I right?'
+    // }
+
+    // Ensure it has the right data.
+    assert.equal(tweetAccount.author.toBase58(), program.provider.wallet.publicKey.toBase58());
+    assert.equal(tweetAccount.topic, 'veganism');
+    assert.equal(tweetAccount.content, 'Hummus, am I right?');
+    assert.ok(tweetAccount.timestamp);
+  })
+
+  it('can send a new tweet without a topic', async () => {
+    // Call the "SendTweet" instruction.
+    const tweet = anchor.web3.Keypair.generate();
+    await program.rpc.sendTweet('', 'gm', {
+      accounts: {
+        tweet: tweet.publicKey,
+        author: program.provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      },
+      signers: [tweet],
+    });
+
+    // Fetch the account details of the created tweet.
+    const tweetAccount = await program.account.tweet.fetch(tweet.publicKey);
+
+    // Ensure it has the right data.
+    assert.equal(tweetAccount.author.toBase58(), program.provider.wallet.publicKey.toBase58());
+    assert.equal(tweetAccount.topic, '');
+    assert.equal(tweetAccount.content, 'gm');
+    assert.ok(tweetAccount.timestamp);
   });
+
+  it('can send a new tweet from a different author', async () => {
+    // Generate another user and airdrop them some SOL.
+    const otherUser = anchor.web3.Keypair.generate();
+
+    // since above new account is 0SOL and does not fit the minimum required lamports/sol for rent-exempt
+    // Now, this API method is a bit special because the user still won't have any money after the await call. That's because it's only "requesting" for the airdrop. To ensure we wait long enough for the money to be in the otherUser account, we need to wait for the transaction to confirm.
+    // Fortunately for us, there is a confirmTransaction method on the connection object that does just this. It accepts a transaction signature which is returned by the previous requestAirdrop call.
+    const signature = await program.provider.connection.requestAirdrop(otherUser.publicKey, 1000000000);
+    await program.provider.connection.confirmTransaction(signature);
+
+    // Call the "SendTweet" instruction on behalf of this other user.
+    const tweet = anchor.web3.Keypair.generate();
+    await program.rpc.sendTweet('veganism', 'Yay Tofu!', {
+      accounts: {
+        tweet: tweet.publicKey,
+        author: otherUser.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      },
+      signers: [otherUser, tweet],
+    });
+
+    // Fetch the account details of the created tweet.
+    const tweetAccount = await program.account.tweet.fetch(tweet.publicKey);
+
+    // Ensure it has the right data.
+    assert.equal(tweetAccount.author.toBase58(), otherUser.publicKey.toBase58());
+    assert.equal(tweetAccount.topic, 'veganism');
+    assert.equal(tweetAccount.content, 'Yay Tofu!');
+    assert.ok(tweetAccount.timestamp);
+  })
+
+  it('cannot provide a topic with more than 50 characters', async () => {
+    try {
+      const tweet = anchor.web3.Keypair.generate();
+      const topicWith51Chars = 'x'.repeat(51);
+      await program.rpc.sendTweet(topicWith51Chars, 'Hummus, am I right?', {
+        accounts: {
+          tweet: tweet.publicKey,
+          author: program.provider.wallet.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        },
+        signers: [tweet],
+      });
+    } catch (error) {
+      assert.equal(error.msg, 'The provided topic should be 50 characters long maximum.');
+      return;
+    }
+
+    assert.fail('The instruction should have failed with a 51-character topic.');
+  });
+
+  it('cannot provide a content with more than 280 characters', async () => {
+    try {
+      const tweet = anchor.web3.Keypair.generate();
+      const contentWith281Chars = 'x'.repeat(281);
+      await program.rpc.sendTweet('veganism', contentWith281Chars, {
+        accounts: {
+          tweet: tweet.publicKey,
+          author: program.provider.wallet.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        },
+        signers: [tweet],
+      });
+    } catch (error) {
+      assert.equal(error.msg, 'The provided content should be 280 characters long maximum.');
+      return;
+    }
+
+    assert.fail('The instruction should have failed with a 281-character content.');
+  })
 });
