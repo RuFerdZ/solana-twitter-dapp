@@ -3,6 +3,7 @@ import { Program } from '@project-serum/anchor';
 import { SolanaTwitter } from '../target/types/solana_twitter';
 import * as assert from "assert";
 import {it} from "mocha";
+import * as bs58 from "bs58";
 
 describe('solana-twitter', () => {
 
@@ -143,4 +144,55 @@ describe('solana-twitter', () => {
 
     assert.fail('The instruction should have failed with a 281-character content.');
   })
+
+  it('can fetch all tweets', async () => {
+    const tweetAccounts = await program.account.tweet.all();
+    assert.equal(tweetAccounts.length, 3);
+    // program id
+    // tweet id
+    // otherUser id
+  });
+
+  it('can filter tweets by author', async () => {
+    const authorPublicKey = program.provider.wallet.publicKey
+    const tweetAccounts = await program.account.tweet.all([
+      {
+        memcmp: {
+          offset: 8, // Discriminator.
+          bytes: authorPublicKey.toBase58(),
+        }
+      }
+    ]);
+
+    assert.equal(tweetAccounts.length, 2);
+    // console.log(tweetAccounts)
+
+    assert.ok(tweetAccounts.every(tweetAccount => {
+      // You might be wondering why we are accessing the author's public key via tweetAccount.account.author whereas, when using the fetch method, we were accessing it via tweetAccount.author directly. That's because the fetch and the all methods don't return exactly the same objects.
+      // When using fetch, we get the Tweet account with all of its data parsed.
+      // When using all, we get the same object but inside a wrapper object that also provides its publicKey. When using fetch, we're already providing the public key of the account so it's not necessary for that method to return it. However, when using all, we don't know the public key of these accounts and, therefore, Anchor wraps the account object in another object to gives us more context. That's why we're accessing the account data through tweetAccount.account.
+      return tweetAccount.account.author.toBase58() === authorPublicKey.toBase58()
+    }))
+  });
+
+  it('can filter tweets by title', async () => {
+    const authorPublicKey = program.provider.wallet.publicKey
+    const tweetAccounts = await program.account.tweet.all([
+      {
+        memcmp: {
+          // the total of the below is the position of the topic
+          offset: 8 + // Discriminator.
+              32 + // Author public key.
+              8 + // Timestamp.
+              4, // Topic string prefix.
+          bytes: bs58.encode(Buffer.from('veganism')), // we need to convert to base-58
+        }
+      }
+    ]);
+
+    assert.equal(tweetAccounts.length, 2);
+    assert.ok(tweetAccounts.every(tweetAccount => {
+      return tweetAccount.account.topic === 'veganism'
+    }))
+  });
 });
